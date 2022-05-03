@@ -210,8 +210,8 @@ void BodyROSItem::createSensors(BodyPtr body)
     for (CameraPtr sensor : visionSensors_) {
         std::string name = sensor->name();
         std::replace(name.begin(), name.end(), '-', '_');
-        const image_transport::Publisher publisher
-            = it.advertise(name + "/image_raw", 1);
+        const image_transport::CameraPublisher publisher
+            = it.advertiseCamera(name + "/image_raw", 1);
         sensor->sigStateChanged().connect([this, sensor, publisher]() {
             updateVisionSensor(sensor, publisher);
         });
@@ -370,11 +370,12 @@ void BodyROSItem::updateAccelSensor
 
 
 void BodyROSItem::updateVisionSensor
-(const CameraPtr& sensor, const image_transport::Publisher& publisher)
+(const CameraPtr& sensor, const image_transport::CameraPublisher& publisher)
 {
     if(!sensor->on()){
         return;
     }
+    // create the sensor_msgs::Image
     sensor_msgs::Image vision;
     vision.header.stamp.fromSec(io->currentTime());
     vision.header.frame_id = sensor->name();
@@ -391,7 +392,31 @@ void BodyROSItem::updateVisionSensor
     vision.step = sensor->image().width() * sensor->image().numComponents();
     vision.data.resize(vision.step * vision.height);
     std::memcpy(&(vision.data[0]), &(sensor->image().pixels()[0]), vision.step * vision.height);
-    publisher.publish(vision);
+
+    // create the sensor_msgs::CameraInfo
+    sensor_msgs::CameraInfo info;
+    info.header = vision.header;
+    info.height = vision.height;
+    info.width = vision.width;
+    info.distortion_model = "plumb_bob";
+    info.D = {0.0, 0.0, 0.0, 0.0, 0.0}; // no distortion is used when using a Normal_Lens
+    //computing the parameter of the camera intrinsic model
+    double f_x, f_y, c_x, c_y;
+    double FoV = sensor->fieldOfView();
+    f_y = vision.height / (2.0 * std::tan(FoV/2.0));
+    f_x = f_y;
+    c_x = vision.width / 2.0;
+    c_y = vision.height / 2.0;
+    info.K = { f_x, 0.0, c_x,
+	       0.0, f_y, c_y,
+	       0.0, 0.0, 1.0 };
+    info.R = { 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 }; // stereo camera only
+    info.P = { info.K[0], info.K[1], info.K[2], 0.0,
+	       info.K[3], info.K[4], info.K[5], 0.0,
+	       info.K[6], info.K[7], info.K[8], 0.0 }; // camera is monocular 
+      
+    // publish the messages
+    publisher.publish(vision, info);
 }
 
 
